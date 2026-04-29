@@ -12,7 +12,7 @@ CHROMA_DIR = os.path.join(DATA_DIR, "chroma_db")
 
 # 阿里云API配置（从环境变量读取，本地开发使用默认值）
 import os
-DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "sk-078d05fef71240278ece028d37bfe9c3")
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY")
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/api/v1"
 
 # 模型配置
