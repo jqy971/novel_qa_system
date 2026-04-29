@@ -76,14 +76,7 @@ class NovelInfo(BaseModel):
 
 # ============ API路由 ============
 
-@app.get("/")
-def root():
-    """根路径"""
-    return {
-        "message": "智能辅助阅读系统 API",
-        "version": "1.0.0",
-        "docs": "/docs"
-    }
+# 删除重复的根路径路由，统一由 serve_frontend 处理
 
 
 @app.post("/api/novels/upload")
