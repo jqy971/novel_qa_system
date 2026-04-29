@@ -5,8 +5,14 @@ import os
 import sys
 import uuid
 import json
+import io
 from typing import List, Optional
 from datetime import datetime
+
+# 修复Windows控制台编码问题
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='ignore')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='ignore')
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -101,8 +107,47 @@ async def upload_novel(file: UploadFile = File(...)):
     file_path = os.path.join(NOVELS_DIR, f"{novel_id}.txt")
     try:
         content = await file.read()
-        with open(file_path, 'wb') as f:
-            f.write(content)
+        
+        # 检测文件编码并转换为UTF-8
+        try:
+            import chardet
+            detected = chardet.detect(content)
+            source_encoding = detected.get('encoding', 'utf-8')
+            confidence = detected.get('confidence', 0)
+            print(f"检测到文件编码: {source_encoding} (置信度: {confidence:.2%})")
+            
+            # 如果检测失败或置信度低，尝试常见编码
+            if not source_encoding or confidence < 0.5:
+                source_encoding = None
+                for enc in ['utf-8', 'gbk', 'gb2312', 'gb18030', 'utf-16', 'big5']:
+                    try:
+                        content.decode(enc)
+                        source_encoding = enc
+                        print(f"使用备用编码: {enc}")
+                        break
+                    except (UnicodeDecodeError, LookupError):
+                        continue
+                if not source_encoding:
+                    source_encoding = 'utf-8'  # 默认使用utf-8
+            
+            # 解码为文本
+            text_content = content.decode(source_encoding, errors='ignore')
+            
+            # 保存为UTF-8编码
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(text_content)
+            print(f"文件已转换为UTF-8保存: {file_path}")
+            
+        except ImportError:
+            # 如果没有chardet，直接保存原始字节
+            print("警告: 未安装chardet，直接保存原始文件")
+            with open(file_path, 'wb') as f:
+                f.write(content)
+        except Exception as e:
+            print(f"编码转换失败: {e}，直接保存原始文件")
+            with open(file_path, 'wb') as f:
+                f.write(content)
+                
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"文件保存失败: {str(e)}")
     
@@ -118,7 +163,8 @@ async def upload_novel(file: UploadFile = File(...)):
         parser.save_metadata(novel_data, novel_id)
         
         # 构建向量库
-        print(f"正在为小说构建向量库: {novel_data['title']}")
+        title_safe = novel_data['title'].encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
+        print(f"正在为小说构建向量库: {title_safe}")
         vector_store = VectorStore(novel_id)
         chunks = novel_data.get("chunks", [])
         if chunks:
@@ -152,9 +198,40 @@ def list_novels():
             try:
                 with open(os.path.join(METADATA_DIR, filename), 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                    title = data.get("title", "")
+                    novel_id = data.get("id", "")
+                    
+                    # 检查标题是否包含乱码（非中文、非ASCII的可打印字符）
+                    has_garbage = False
+                    for char in title:
+                        code = ord(char)
+                        # 允许：ASCII可打印字符、中文、常见标点
+                        if code < 32:  # 控制字符
+                            has_garbage = True
+                            break
+                        elif code >= 128 and not (0x4e00 <= code <= 0x9fff):  # 非中文的扩展字符
+                            # 允许一些常见符号
+                            if not (0x3000 <= code <= 0x303f or  # 中文标点
+                                    0xff00 <= code <= 0xffef or  # 全角字符
+                                    0x2000 <= code <= 0x206f):   # 一般标点
+                                has_garbage = True
+                                break
+                    
+                    if has_garbage:
+                        # 删除损坏的文件
+                        try:
+                            os.remove(os.path.join(METADATA_DIR, filename))
+                            novel_file = os.path.join(NOVELS_DIR, f"{novel_id}.txt")
+                            if os.path.exists(novel_file):
+                                os.remove(novel_file)
+                            print(f"已删除损坏的小说文件: {filename}")
+                        except Exception as del_err:
+                            print(f"删除失败 {filename}: {del_err}")
+                        continue
+                    
                     novels.append({
-                        "id": data.get("id"),
-                        "title": data.get("title"),
+                        "id": novel_id,
+                        "title": title,
                         "chapter_count": data.get("chapter_count", 0),
                         "chunk_count": data.get("chunk_count", 0),
                         "total_chars": data.get("total_chars", 0),
